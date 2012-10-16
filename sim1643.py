@@ -5,7 +5,9 @@ from matplotlib import pyplot as plt
 import os
 
 
-std_prof = np.genfromtxt('/psr/gjones/1643-1224.Rcvr_800.std')[:,1]
+std_prof = np.genfromtxt('1643-1224.Rcvr_800.std')[:,1]
+
+std_12 = np.genfromtxt('1643-1224.Rcvr1_2.std')[:,1]
 
 ref_freq = 1/4.62e-3
 bw = 10.119529411764706
@@ -26,7 +28,8 @@ def runLoopTest(tau=650.0,nlag=4096,bw=1.0,noise=0,tolfact=10, niter=5,maxfun=10
     
     CS.initProfile(maxinitharm=maxinitharm)
     
-    np.savez(os.path.join(plotdir,'start'),cs=CS.cs,pp_ref=CS.pp_ref)
+    np.savez(os.path.join(plotdir,'start'),cs=CS.cs,pp_ref=CS.pp_ref,
+             pp_start = CS.data.mean(2).squeeze())
     
     
     for k in range(1,niter+1):
@@ -79,7 +82,7 @@ def initSim(ht,prof=std_prof,ref_freq=ref_freq,bw=bw,noise = None):
     CS.cs = csm.copy()
     if noise is not None:
         fact = CS.data.std()*noise
-        CS.data += (np.random.randn(CS.data.shape[2],CS.data.shape[3])+1j*np.random.randn(CS.data.shape[2],CS.data.shape[3]))*fact
+        CS.data += (np.random.randn(CS.data.shape[2],CS.data.shape[3]).astype('complex')+1j*np.random.randn(CS.data.shape[2],CS.data.shape[3]))*fact
     return CS
 
 def makeht(tau=1.0,nlag=1024,scale = 0,bw=bw):
@@ -95,6 +98,87 @@ def makehtOne(tau=1.0,val = 0.1, nlag=1024):
     ht[0] = 1.0
     ht[int(tau*bw)] = val
     return ht
+    
+def plotGbt(dirname='D:/data/itersim1643_tau650.00us_noise8.01_plots'):
+#def plotGbt(dirname='D:/data/itersim1643_tau650.00us_noise16.00_plots'):
+    f,axs = plt.subplots(nrows=4,sharex=True,figsize=(3,6))
+    f.subplots_adjust(left=0.175,bottom=0.125)
+    ht0 = np.load(os.path.join(dirname,'ht0.npy'))
+    pmeas = np.load('profile_noise8.npy')
+    start = np.load(os.path.join(dirname,'start.npz'))
+    iter5 = np.load(os.path.join(dirname,'iter5.npz'))
+    tp = 1000*np.linspace(0,1/ref_freq,pmeas.shape[0],endpoint=False)
+    th = 1000*np.arange(ht0.shape[0])/1e6
+    fr = np.linspace(0,1e3,ht0.shape[0])
+    axs[0].plot(tp,np.roll(pycyc.normalize_pp(std_prof),1024),'k',label='Original profile')    
+    axs[0].set_ylim(-2,10)
+    axs[2].plot(tp,np.roll(pycyc.normalize_pp(pmeas),1024),'k',label='Simulated scattered profile')
+    axs[2].set_ylim(-2,10)
+    axs[1].plot(th,np.roll(np.abs(ht0)**2,ht0.shape[0]/2),'k',label='Simulated $|h(t)|^2$')    
+    max0 = std_prof.argmax()
+    max1 = iter5['pp_int'].argmax()
+    
+    axs[3].plot(tp,np.roll(pycyc.normalize_pp(iter5['pp_int']),1024),'k',label='Calculated intrinsic profile')
+    axs[3].plot(tp,np.roll(pycyc.normalize_pp(std_prof),1024-max0+max1),'r',lw=1.5,label='Original profile')
+    axs[3].set_ylim(-2,10)
+    max0 = pmeas.argmax()
+    max1 = start['pp_ref'].argmax()    
+    axs[2].plot(tp,np.roll(pycyc.normalize_pp(start['pp_ref']),1024-max0+max1),'r',linewidth=1,label='Initial guess')
+#    axs[4].plot(th,np.roll(np.abs(iter5['ht'])**2,iter5['ht'].shape[0]/2))
+    axs[0].set_xlim(0,1000/ref_freq)
+    
+    for k in range(4):
+        axs[k].yaxis.set_major_locator(plt.MaxNLocator(4))
+        
+    axs[3].xaxis.set_major_locator(plt.MaxNLocator(5))
+    axs[3].set_xlabel('Time (ms)')
+
+    f.savefig('panel1.pdf')
+#    axs[0].legend(prop=dict(size='x-small'),loc='upper left')
+#    axs[1].legend(prop=dict(size='x-small'),loc='upper left')
+#    axs[2].legend(prop=dict(size='x-small'),loc='upper left')
+#    axs[3].legend(prop=dict(size='x-small'),loc='upper left')
+    
+    f,axs = plt.subplots(nrows=2,sharex=True,figsize=(3,6))
+    f.subplots_adjust(left=0.175,bottom=0.125)
+    hf2 = pycyc.time2freq(np.roll(iter5['ht'],290))/86.7
+    hf0 = pycyc.time2freq(ht0)
+    ht2 = np.roll(iter5['ht'],290+2048)/86.7
+    ht0r = np.roll(ht0,2048)
+    
+    axs[0].plot(th,np.abs(ht0r)**2,'k')
+    axs[1].plot(th,np.abs(ht2)**2,'k')    
+    axs[0].set_xlim(0,th.max())
+    axs[0].text(0.05,0.95,r'$|h(t)|^2$',transform=axs[0].transAxes,ha='left',va='top',bbox=dict(fc='w'))
+    axs[1].text(0.05,0.95,r'$|\hat{h}(t)|^2$',transform=axs[1].transAxes,ha='left',va='top',bbox=dict(fc='w'))
+
+    
+    for k in range(2):
+        axs[k].yaxis.set_major_locator(plt.MaxNLocator(4))
+        axs[k].set_ylim(0,24)
+    axs[1].xaxis.set_major_locator(plt.MaxNLocator(5))
+    axs[1].set_xlabel('Time (ms)')
+    
+    f.savefig('panel2.pdf')
+    
+    f,axs = plt.subplots(nrows=2,sharex=True,figsize=(3,6))
+    f.subplots_adjust(left=0.175,bottom=0.125)
+    axs[0].plot(fr,np.abs(hf2/hf0),'k')
+    axs[0].text(0.05,0.95,r'$\left|\frac{\hat{H}(f)}{H(f)}\right|$',transform=axs[0].transAxes,ha='left',va='top',bbox=dict(fc='w'))
+    axs[1].plot(fr,np.angle(hf2*np.conj(hf0)),'k')    
+    axs[1].text(0.05,0.95,r'$\angle\left(\frac{\hat{H}(f)}{H(f)}\right)$',transform=axs[1].transAxes,ha='left',va='top',bbox=dict(fc='w'))
+    axs[0].set_xlim(300,380)
+    axs[0].set_ylim(0,5)
+    axs[1].xaxis.set_major_locator(plt.MaxNLocator(5))
+    axs[1].set_ylabel('radians')
+    axs[1].set_xlabel('Relative RF frequency (kHz)')
+    
+    axs[0].yaxis.set_major_locator(plt.MaxNLocator(5))
+    axs[1].yaxis.set_major_locator(plt.MaxNLocator(4))
+
+
+    f.savefig('panel3.pdf')
+
 
 def grabData():
     import glob

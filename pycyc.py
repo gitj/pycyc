@@ -89,8 +89,10 @@ colorbar()
 CS.loop(make_plots=True, tolfact=10, maxneg=10, maxlen = 110)
 
 """
-
-import psrchive
+try:
+    import psrchive
+except:
+    pass
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.figure import Figure                         
@@ -124,7 +126,7 @@ class CyclicSolver():
         
         return cs
             
-    def load(self,filename,offp= None):
+    def load(self,filename):
         """ 
         Load periodic spectrum from psrchive compatible file (.ar or .fits)
         
@@ -135,9 +137,6 @@ class CyclicSolver():
         self.ar = psrchive.Archive_load(filename)
         self.bw = self.ar.get_bandwidth()
         self.data = self.ar.get_data()  #we load all data here, so this should probably change in the long run
-        if offp:
-            wghts = self.data[:,:,:,offp[0]:offp[1]].mean(3)
-            self.data = self.data/wghts[:,:,:,None]
         subint = self.ar.get_Integration(idx)
         self.nspec,self.npol,self.nchan,self.nbin = self.data.shape
         
@@ -146,7 +145,7 @@ class CyclicSolver():
         self.fmjd = np.fmod(epoch,1)
         self.ref_phase = 0.0
         self.ref_freq = 1.0/subint.get_folding_period()
-        self.bw = np.abs(subint.get_bandwidth())
+        self.bw = subint.get_bandwidth()
         self.rf = subint.get_centre_frequency()
         
         self.source = self.ar.get_source() # source name
@@ -530,6 +529,15 @@ def normalize_profile(ph):
     Normalize harmonic profile such that first harmonic has magnitude 1
     """
     return ph/np.abs(ph[1])
+    
+def normalize_pp(pp):
+    """
+    Normalize a profile but keep it in phase rather than harmonics
+    """
+    ph = phase2harm(pp)
+    ph = normalize_profile(ph)
+    ph[0] = 0
+    return harm2phase(ph)
 
 def normalize_cs(cs,bw,ref_freq):
     rms1 = rms_cs(cs,ih=1,bw=bw,ref_freq=ref_freq)
@@ -554,13 +562,10 @@ def cyclic_padding(cs,bw,ref_freq):
 
 def chan_limits_cs(iharm,nchan,bw,ref_freq):
     inv_aspect = ref_freq * nchan
-    inv_aspect *= iharm / (np.abs(bw)*1e6)
+    inv_aspect *= iharm / (bw*1e6)
     inv_aspect -= 1
     inv_aspect /= 2.0
-#    print iharm, nchan, inv_aspect
     ichan = int(inv_aspect) + 1
-    if ichan < 0:
-        ichan = 0
     if ichan > nchan/2:
         ichan = nchan/2
     return (ichan,nchan-ichan) #min,max
