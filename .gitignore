@@ -32,3 +32,5 @@ pip-log.txt
 /j1713_21_00_ar.txt
 /j1713_21_50_ar_polavg.txt
 /test.txt
+/.project
+/.pydevproject
