@@ -135,17 +135,21 @@ class CyclicSolver():
         
         self.filename = filename
         self.ar = psrchive.Archive_load(filename)
-        self.bw = self.ar.get_bandwidth()
+        
         self.data = self.ar.get_data()  #we load all data here, so this should probably change in the long run
         subint = self.ar.get_Integration(idx)
         self.nspec,self.npol,self.nchan,self.nbin = self.data.shape
         
         epoch = subint.get_epoch()
-        self.imjd = np.floor(epoch)
-        self.fmjd = np.fmod(epoch,1)
+        try:
+            self.imjd = np.floor(epoch)
+            self.fmjd = np.fmod(epoch,1)
+        except: #new version of psrchive has different kind of epoch
+            self.imjd = epoch.intday()
+            self.fmjd = epoch.fracday()
         self.ref_phase = 0.0
         self.ref_freq = 1.0/subint.get_folding_period()
-        self.bw = subint.get_bandwidth()
+        self.bw = np.abs(subint.get_bandwidth())
         self.rf = subint.get_centre_frequency()
         
         self.source = self.ar.get_source() # source name
