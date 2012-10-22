@@ -104,9 +104,13 @@ import os
 
 
 class CyclicSolver():
-    def __init__(self, filename=None, statefile=None):
+    def __init__(self, filename=None, statefile=None, offp = None):
+        """
+        
+        *offp* : passed to the load method for selecting an off pulse region (optional).
+        """
         if filename:
-            self.load(filename)
+            self.load(filename,offp=offp)
         elif statefile:
             self.loadState(statefile)
         else:
@@ -126,9 +130,14 @@ class CyclicSolver():
         
         return cs
             
-    def load(self,filename):
+    def load(self,filename,offp=None,maxchan = None):
         """ 
         Load periodic spectrum from psrchive compatible file (.ar or .fits)
+        
+        *offp*: tuple (start,end) with start and end bin numbers to use as off pulse region for normalizing the bandpass
+        
+        *maxchan*: Top channel index to use. Quick and dirty way to pull out one subband from a file which contains multiple
+                    subbands
         
         """
         idx = 0 # only used to get parameters of integration, not data itself
@@ -137,6 +146,13 @@ class CyclicSolver():
         self.ar = psrchive.Archive_load(filename)
         
         self.data = self.ar.get_data()  #we load all data here, so this should probably change in the long run
+        if maxchan:
+            bwfact = maxchan/(1.0*self.data.shape[2]) # bwfact used to indicate the actual bandwidth of the data if we're not using all channels.
+            self.data = self.data[:,:,:maxchan,:]
+        else:
+            bwfact = 1.0
+        if offp:
+            self.data = self.data/(np.abs(self.data[:,:,:,offp[0]:offp[1]]).mean(3)[:,:,:,None])
         subint = self.ar.get_Integration(idx)
         self.nspec,self.npol,self.nchan,self.nbin = self.data.shape
         
@@ -149,7 +165,7 @@ class CyclicSolver():
             self.fmjd = epoch.fracday()
         self.ref_phase = 0.0
         self.ref_freq = 1.0/subint.get_folding_period()
-        self.bw = np.abs(subint.get_bandwidth())
+        self.bw = np.abs(subint.get_bandwidth()) * bwfact
         self.rf = subint.get_centre_frequency()
         
         self.source = self.ar.get_source() # source name
@@ -172,6 +188,8 @@ class CyclicSolver():
         
         Resulting profile is assigned to self.pp_ref
         The results of this routine have been checked to agree with filter_profile -i
+        
+        *maxinitharm* : zero harmonics above this one in the initial profile (acts to smooth/denoise) (optional)
         
         """
         hf_prev = np.ones((self.nchan,),dtype='complex')
@@ -214,7 +232,7 @@ class CyclicSolver():
     def loop(self,isub=0,ipol=0,hf_prev=None,make_plots=False,
              maxfun = 1000, tolfact=1, iprint=1, plotdir = None,
              maxneg = None, maxlen = None, rindex= None,
-             ht0 = None):
+             ht0 = None,max_plot_lag=50):
         """
         Run the non-linear solver to compute the IRF
         
@@ -227,9 +245,12 @@ class CyclicSolver():
         iprint: int
             Passed to scipy.optimize.fmin_l_bfgs (see docs)
             use 0 for silent, 1 for verbose, 2 for more log info
+            
+        max_plot_lag: highest lag to plot in diagnostic plots.
         """
         self.make_plots = make_plots
         if make_plots:
+            self.mlag = max_plot_lag
             if plotdir is None:
                 blah,fbase = os.path.split(self.filename)
                 plotdir = os.path.join(os.path.abspath(os.path.curdir),('%s_plots' % fbase))
@@ -417,6 +438,124 @@ class CyclicSolver():
         self.ar = orig_ar
         self.statefile = orig_statefile
         print "Saved state in:", filename
+        
+        
+    def plotCurrentSolution(self):
+        cs_model = self.model
+        grad = self.grad
+        hf = self.hf
+        ht = self.ht
+        mlag = self.mlag
+        fig = Figure()
+        ax1 = fig.add_subplot(3,3,1)
+        csextent = [1,mlag-1,self.rf+self.bw/2.0,self.rf-self.bw/2.0]
+        im = ax1.imshow(np.log10(np.abs(self.cs[:,1:mlag])),aspect='auto',interpolation='nearest',extent=csextent)
+        #im = ax1.imshow(cs2ps(self.cs),aspect='auto',interpolation='nearest',extent=csextent)
+        ax1.set_xlim(0,mlag)
+        ax1.text(0.9,0.9,"log|CS|",
+                 fontdict=dict(size='small'),va='top',ha='right',
+                 transform=ax1.transAxes, bbox=dict(alpha=0.75,fc='white'))
+        im.set_clim(-4,2)
+        
+        ax1b = fig.add_subplot(3,3,2)
+        im = ax1b.imshow(np.angle(self.cs[:,:mlag])-np.median(np.angle(self.cs[:,:mlag]),axis=0)[None,:],cmap=plt.cm.hsv,aspect='auto',interpolation='nearest',extent=csextent)
+        #im = ax1b.imshow(self.cs[:,:mlag].imag,aspect='auto',interpolation='nearest',extent=csextent)
+        
+        im.set_clim(-np.pi,np.pi)
+        ax1b.set_xlim(0,mlag)
+        ax1b.text(0.9,0.9,"angle(CS)",
+                 fontdict=dict(size='small'),va='top',ha='right',
+                 transform=ax1b.transAxes, bbox=dict(alpha=0.75,fc='white'))
+        for tl in ax1b.yaxis.get_ticklabels():
+            tl.set_visible(False)
+        ax2 = fig.add_subplot(3,3,4)
+        im = ax2.imshow(np.log10(np.abs(cs_model[:,1:mlag])),aspect='auto',interpolation='nearest',extent=csextent)
+        #im = ax2.imshow(cs2ps(cs_model),aspect='auto',interpolation='nearest',extent=csextent)
+        im.set_clim(-4,2)
+        ax2.set_xlim(0,mlag)
+        ax2.set_ylabel('RF (MHz)')
+        ax2.text(0.9,0.9,"log|CS model|",
+                 fontdict=dict(size='small'),va='top',ha='right',
+                 transform=ax2.transAxes, bbox=dict(alpha=0.75,fc='white'))
+
+        ax2b = fig.add_subplot(3,3,5)
+        im = ax2b.imshow(np.angle(cs_model[:,:mlag])-np.median(np.angle(cs_model[:,:mlag]),axis=0)[None,:],cmap=plt.cm.hsv,aspect='auto',interpolation='nearest',extent=csextent)
+        #im = ax2b.imshow(cs_model[:,:mlag].imag,aspect='auto',interpolation='nearest',extent=csextent)
+        im.set_clim(-np.pi,np.pi)
+        ax2b.set_xlim(0,mlag)
+        ax2b.text(0.9,0.9,"angle(CS model)",
+                 fontdict=dict(size='small'),va='top',ha='right',
+                 transform=ax2b.transAxes, bbox=dict(alpha=0.75,fc='white'))
+        for tl in ax2b.yaxis.get_ticklabels():
+            tl.set_visible(False)
+        sopt = optimize_profile(self.cs,hf,self.bw,self.ref_freq)
+        sopt = normalize_profile(sopt)
+        sopt[0] = 0.0        
+        smeas = normalize_profile(self.cs.mean(0))
+        smeas[0] = 0.0
+#        cs_model0,csplus,csminus,phases = make_model_cs(hf,sopt,self.bw,self.ref_freq)
+
+        ax3 = fig.add_subplot(3,3,7)
+#        ax3.imshow(np.log(np.abs(cs_model0)[:,1:]),aspect='auto')
+        err = (np.abs(self.cs-cs_model)[:,1:mlag])
+        #err = cs2ps(self.cs) - cs2ps(normalize_cs(cs_model,self.bw,self.ref_freq))
+        im = ax3.imshow(err,aspect='auto',interpolation='nearest',extent=csextent)
+        ax3.set_xlim(0,mlag)
+        im.set_clim(err[1:-1,1:-1].min(),err[1:-1,1:-1].max())
+        ax3.text(0.9,0.9,"|error|",
+                 fontdict=dict(size='small'),va='top',ha='right',
+                 transform=ax3.transAxes, bbox=dict(alpha=0.75,fc='white'))
+        ax3.set_xlabel('Harmonic')
+        
+        ax3b = fig.add_subplot(3,3,8)
+        im = ax3b.imshow(np.angle((self.cs[:,:mlag]/cs_model[:,:mlag])),cmap=plt.cm.hsv,aspect='auto',interpolation='nearest',extent=csextent)
+        #im = ax3b.imshow((self.cs[:,:mlag]-cs_model[:,:mlag]).imag,aspect='auto',interpolation='nearest',extent=csextent)
+        im.set_clim(-np.pi/2.,np.pi/2.)
+        ax3b.set_xlim(0,mlag)
+        ax3b.text(0.9,0.9,"angle(error)",
+                 fontdict=dict(size='small'),va='top',ha='right',
+                 transform=ax3b.transAxes, bbox=dict(alpha=0.75,fc='white'))
+        for tl in ax3b.yaxis.get_ticklabels():
+            tl.set_visible(False)
+        ax3b.set_xlabel('Harmonic')
+
+        ax4 = fig.add_subplot(3,3,3)
+        t = np.arange(ht.shape[0])/self.bw
+        ax4.plot(t,np.roll(20*np.log10(np.abs(ht)),(ht.shape[0]/2)-self.rindex))
+        ax4.plot(t,np.roll(20*np.log10(np.convolve(np.ones((10,))/10.0,np.abs(ht),mode='same')),(ht.shape[0]/2)-self.rindex),linewidth=2,color='r',alpha=0.4)
+        ax4.set_ylim(0,80)
+        ax4.set_xlim(t[0],t[-1])
+        ax4.text(0.9,0.9,"dB|h(t)|$^2$",
+                 fontdict=dict(size='small'),va='top',ha='right',
+                 transform=ax4.transAxes)
+        ax4.text(0.95,0.01,"$\\mu$s",
+                 fontdict=dict(size='small'),va='bottom',ha='right',
+                 transform=ax4.transAxes)
+        ax5 = fig.add_subplot(3,3,6)
+        if len(self.objval) >= 3:
+            x = np.abs(np.diff(np.array(self.objval).flatten()))
+            ax5.plot(np.arange(x.shape[0]),np.log10(x))
+        ax5.text(0.9,0.9,"log($\\Delta$merit)",
+                 fontdict=dict(size='small'),va='top',ha='right',transform=ax5.transAxes)
+        ax6 = fig.add_subplot(3,3,9)
+        pref =  harm2phase(self.s0)
+        ax6.plot(pref,label='Reference',linewidth=2)
+        ax6.plot(harm2phase(sopt),'r',label='Intrinsic')
+        ax6.plot(harm2phase(smeas),'g',label='Measured')
+        l = ax6.legend(loc='upper left',prop=dict(size='xx-small'),title='Profiles')
+        l.get_frame().set_alpha(0.5)
+        ax6.set_xlim(0,pref.shape[0])
+        fname = self.filename[-50:]
+        if len(self.filename) > 50:
+            fname = '...' + fname
+        title = "%s isub: %d ipol: %d nopt: %d\n" % (fname, self.isub,self.ipol,self.nopt)
+        title += ("Source: %s Freq: %s MHz Feval #%04d Merit: %.3e Grad: %.3e" % 
+                  (self.source, self.rf, self.niter, self.objval[-1], np.abs(grad).sum()))
+        fig.suptitle(title, size='small')
+        canvas = FigureCanvasAgg(fig)
+        fname = os.path.join(self.plotdir,('%s_%04d_%04d.png' % (self.source, self.nopt, self.niter)))
+        canvas.print_figure(fname)
+
         
         
         
@@ -666,6 +805,8 @@ def cyclic_merit_lag(x,*args):
     print "rindex",CS.rindex
     ht = get_ht(x,CS.rindex)
     hf = time2freq(ht)
+    CS.hf = hf
+    CS.ht = ht
     cs_model,csplus,csminus,phases = make_model_cs(hf,CS.s0,CS.bw,CS.ref_freq)
     merit = 2*(np.abs(cs_model[:,1:] - CS.cs[:,1:])**2).sum() #ignore zeroth harmonic (dc term)
     
@@ -706,81 +847,14 @@ def cyclic_merit_lag(x,*args):
     grad2 = 4.0 * cc2 * np.conj(phasors) * cs0 / CS.nchan
     
     grad = grad + grad2[:,1:].sum(1)
-    if CS.niter == 0:
-        CS.grad = grad[:]
-        CS.model = cs_model[:]
-    
+    CS.grad = grad[:]
+    CS.model = cs_model[:]
+
     if CS.iprint:
         print "merit= %.7e  grad= %.7e" % (merit,(np.abs(grad)**2).sum())
-    
+            
     if CS.make_plots:
-        fig = Figure()
-        ax1 = fig.add_subplot(3,2,1)
-        csextent = [1,CS.cs.shape[1]-1,CS.rf+CS.bw/2.0,CS.rf-CS.bw/2.0]
-        im = ax1.imshow(np.log10(np.abs(CS.cs[:,1:])),aspect='auto',interpolation='nearest',extent=csextent)
-        ax1.set_xlim(0,50)
-        ax1.text(0.9,0.9,"log|CS|",
-                 fontdict=dict(size='small'),va='top',ha='right',transform=ax1.transAxes)
-        im.set_clim(-4,2)
-        ax2 = fig.add_subplot(3,2,3)
-        im = ax2.imshow(np.log10(np.abs(cs_model[:,1:])),aspect='auto',interpolation='nearest',extent=csextent)
-        im.set_clim(-4,2)
-        ax2.set_xlim(0,50)
-        ax2.set_ylabel('RF (MHz)')
-        ax2.text(0.9,0.9,"log|CS model|",
-                 fontdict=dict(size='small'),va='top',ha='right',transform=ax2.transAxes)
-
-        sopt = optimize_profile(CS.cs,hf,CS.bw,CS.ref_freq)
-        sopt = normalize_profile(sopt)
-        sopt[0] = 0.0        
-        smeas = normalize_profile(CS.cs.mean(0))
-        smeas[0] = 0.0
-#        cs_model0,csplus,csminus,phases = make_model_cs(hf,sopt,CS.bw,CS.ref_freq)
-
-        ax3 = fig.add_subplot(3,2,5)
-#        ax3.imshow(np.log(np.abs(cs_model0)[:,1:]),aspect='auto')
-        err = (np.abs(CS.cs-cs_model)[:,1:])
-        im = ax3.imshow(err,aspect='auto',interpolation='nearest',extent=csextent)
-        ax3.set_xlim(0,50)
-        im.set_clim(0,2)
-        ax3.text(0.9,0.9,"log|error|",
-                 fontdict=dict(size='small'),va='top',ha='right',transform=ax3.transAxes)
-        ax3.set_xlabel('Harmonic')
-
-        ax4 = fig.add_subplot(3,2,2)
-        t = np.arange(ht.shape[0])/CS.bw
-        ax4.plot(t,np.roll(20*np.log10(np.abs(ht)),(ht.shape[0]/2)-CS.rindex))
-        ax4.set_ylim(0,80)
-        ax4.set_xlim(t[0],t[-1])
-        ax4.text(0.9,0.9,"dB|h(t)|",
-                 fontdict=dict(size='small'),va='top',ha='right',transform=ax4.transAxes)
-        ax4.text(0.95,0.01,"$\\mu$s",
-                 fontdict=dict(size='small'),va='bottom',ha='right',transform=ax4.transAxes)
-        ax5 = fig.add_subplot(3,2,4)
-        if len(CS.objval) >= 3:
-            x = np.abs(np.diff(np.array(CS.objval).flatten()))
-            ax5.plot(np.arange(x.shape[0]),np.log10(x))
-        ax5.text(0.9,0.9,"log($\\Delta$merit)",
-                 fontdict=dict(size='small'),va='top',ha='right',transform=ax5.transAxes)
-        ax6 = fig.add_subplot(3,2,6)
-        pref =  harm2phase(CS.s0)
-        ax6.plot(pref,label='Reference',linewidth=2)
-        ax6.plot(harm2phase(sopt),'r',label='Intrinsic')
-        ax6.plot(harm2phase(smeas),'g',label='Measured')
-        l = ax6.legend(loc='upper left',prop=dict(size='xx-small'),title='Profiles')
-        l.get_frame().set_alpha(0.5)
-        ax6.set_xlim(0,pref.shape[0])
-        #ax6.plot(np.fft.fftshift(np.abs(grad)))
-        fname = CS.filename[-50:]
-        if len(CS.filename) > 50:
-            fname = '...' + fname
-        title = "%s isub: %d ipol: %d nopt: %d\n" % (fname, CS.isub,CS.ipol,CS.nopt)
-        title += ("Source: %s Freq: %s MHz Feval #%04d Merit: %.3e Grad: %.3e" % 
-                  (CS.source, CS.rf, CS.niter, merit, np.abs(grad).sum()))
-        fig.suptitle(title, size='small')
-        canvas = FigureCanvasAgg(fig)
-        fname = os.path.join(CS.plotdir,('%s_%04d_%04d.png' % (CS.source, CS.nopt, CS.niter)))
-        canvas.print_figure(fname)
+        CS.plotCurrentSolution()
         
         
     
