@@ -102,7 +102,6 @@ import cPickle
 import scipy, scipy.optimize
 import os
 
-
 class CyclicSolver():
     def __init__(self, filename=None, statefile=None, offp = None):
         """
@@ -176,7 +175,9 @@ class CyclicSolver():
         
         self.dynamic_spectrum = np.zeros((self.nspec,self.nchan))
         self.optimized_filters = np.zeros((self.nspec,self.nchan),dtype='complex')
-        self.nopt = 0        
+        self.intrinsic_profiles = np.zeros((self.nspec,self.nbin))
+        self.nopt = 0
+        self.nloop = 0        
         
     def initProfile(self,loadFile=None,ipol=0,maxinitharm=None):
         """
@@ -227,6 +228,24 @@ class CyclicSolver():
             self.pp_int += pp
             
         self.pp_ref = self.pp_int[:]
+        
+    def solve(self,**kwargs):
+        """
+        Construct an iterative solution to the IRF using multiple subintegrations
+        """
+        if kwargs.pop('restart',False):
+                self.nopt = 0
+        savefile = kwargs.pop('savebase',os.path.abspath(self.filename)+('_%02d.cysolve.pkl' % self.nloop))
+
+        if kwargs.has_key('savedir'):
+            savedir = kwargs['savedir']
+        for isub in range(self.nspec):
+            kwargs['isub'] = isub
+            self.loop(**kwargs)
+            print "Saving after nopt:", self.nopt
+            self.saveState(savefile)
+            
+        self.pp_ref = self.pp_int
 
         
     def loop(self,isub=0,ipol=0,hf_prev=None,make_plots=False,
@@ -360,6 +379,7 @@ class CyclicSolver():
         ph[0] = 0.0
         pp = harm2phase(ph)
         
+        self.intrinsic_profiles[isub,:] = pp
         self.pp_int += pp
         
         self.nopt += 1
