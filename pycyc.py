@@ -246,6 +246,7 @@ class CyclicSolver():
             self.saveState(savefile)
             
         self.pp_ref = self.pp_int
+        self.nloop += 1
 
         
     def loop(self,isub=0,ipol=0,hf_prev=None,make_plots=False,
