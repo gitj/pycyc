@@ -103,10 +103,11 @@ import scipy, scipy.optimize
 import os
 
 class CyclicSolver():
-    def __init__(self, filename=None, statefile=None, offp = None):
+    def __init__(self, filename=None, statefile=None, offp = None,tscrunch=None):
         """
         
         *offp* : passed to the load method for selecting an off pulse region (optional).
+        *tscrunch* : passed to the load method for averaging subintegrations
         """
         if filename:
             self.load(filename,offp=offp)
@@ -129,7 +130,7 @@ class CyclicSolver():
         
         return cs
             
-    def load(self,filename,offp=None,maxchan = None):
+    def load(self,filename,offp=None,maxchan = None,tscrunch=None):
         """ 
         Load periodic spectrum from psrchive compatible file (.ar or .fits)
         
@@ -137,7 +138,7 @@ class CyclicSolver():
         
         *maxchan*: Top channel index to use. Quick and dirty way to pull out one subband from a file which contains multiple
                     subbands
-        
+        *tscrunch* : average down by a factor of 1/tscrunch (i.e. if tscrunch = 2, average every pair of subints)
         """
         idx = 0 # only used to get parameters of integration, not data itself
         
@@ -152,6 +153,13 @@ class CyclicSolver():
             bwfact = 1.0
         if offp:
             self.data = self.data/(np.abs(self.data[:,:,:,offp[0]:offp[1]]).mean(3)[:,:,:,None])
+        if tscrunch:
+            for k in range(1,tscrunch):
+                self.data[:-k,:,:,:] += self.data[k:,:,:,:]
+#            d = self.data
+#            nsub = d.shape[0]/tscrunch
+#            ntot = nsub*tscrunch
+#            self.data = d[:ntot,:,:,:].reshape((nsub,tscrunch,d.shape[1],d.shape[2],d.shape[3])).mean(1)
         subint = self.ar.get_Integration(idx)
         self.nspec,self.npol,self.nchan,self.nbin = self.data.shape
         
@@ -252,7 +260,8 @@ class CyclicSolver():
     def loop(self,isub=0,ipol=0,hf_prev=None,make_plots=False,
              maxfun = 1000, tolfact=1, iprint=1, plotdir = None,
              maxneg = None, maxlen = None, rindex= None,
-             ht0 = None,max_plot_lag=50):
+             ht0 = None,max_plot_lag=50,use_last_soln=True, use_minphase = True,
+             onp=None,adjust_delay=True):
         """
         Run the non-linear solver to compute the IRF
         
@@ -267,6 +276,9 @@ class CyclicSolver():
             use 0 for silent, 1 for verbose, 2 for more log info
             
         max_plot_lag: highest lag to plot in diagnostic plots.
+        use_last_soln: If true, use last filter as initial guess for this subint
+        use_minphase: if true, use minimum phase IRF as initial guess
+                        else use delta function
         """
         self.make_plots = make_plots
         if make_plots:
@@ -307,7 +319,7 @@ class CyclicSolver():
         ph = self.ph_ref[:]
         self.s0 = ph
                     
-        if self.nopt == 0:
+        if self.nopt == 0 or not use_last_soln:
             self.pp_int = np.zeros((self.nphase,))
             if ht0 is None:
                 if rindex is None:
@@ -317,6 +329,11 @@ class CyclicSolver():
                 print "initial filter: delta function at delay = %d" % delay
                 ht = np.zeros((self.nlag,),dtype='complex')
                 ht[delay] = self.nlag
+                if use_minphase:
+                    spect = np.abs(self.data[isub,ipol,:,onp[0]:onp[1]]).mean(1)
+                    ht = freq2time(minphase(spect-spect.min()))
+                    ht = np.roll(ht,delay)
+                    print "using minimum phase with peak at:",np.abs(ht).argmax()
             else:
                 ht = ht0.copy()
             hf = time2freq(ht)
@@ -324,11 +341,13 @@ class CyclicSolver():
             hf = _hf_prev.copy()
         ht = freq2time(hf)
         
-        if rindex is None:
-            rindex = np.abs(ht).argmax()
-        self.rindex = rindex
-        
-        print "max filter index = %d" % rindex
+        if self.nopt == 0 or adjust_delay:
+            if rindex is None:
+                rindex = np.abs(ht).argmax()
+            self.rindex = rindex
+        else:
+            rindex = self.rindex
+        print "max filter index = %d" % self.rindex
         
         if maxneg is not None:
             if maxlen is not None:
@@ -350,6 +369,7 @@ class CyclicSolver():
         dim0 = 2*self.nlag-1
         
         var,nvalid = self.cyclic_variance(cs)
+        self.noise = np.sqrt(var)
         dof = nvalid - dim0 - self.nphase
         print "variance : %.5e" % var
         print "nsamp    : %.5e" % nvalid
@@ -522,7 +542,8 @@ class CyclicSolver():
         #err = cs2ps(self.cs) - cs2ps(normalize_cs(cs_model,self.bw,self.ref_freq))
         im = ax3.imshow(err,aspect='auto',interpolation='nearest',extent=csextent)
         ax3.set_xlim(0,mlag)
-        im.set_clim(err[1:-1,1:-1].min(),err[1:-1,1:-1].max())
+#        im.set_clim(err[1:-1,1:-1].min(),err[1:-1,1:-1].max())
+        im.set_clim(0,3*self.noise)
         ax3.text(0.9,0.9,"|error|",
                  fontdict=dict(size='small'),va='top',ha='right',
                  transform=ax3.transAxes, bbox=dict(alpha=0.75,fc='white'))
@@ -540,10 +561,11 @@ class CyclicSolver():
             tl.set_visible(False)
         ax3b.set_xlabel('Harmonic')
 
-        ax4 = fig.add_subplot(3,3,3)
+        ax4 = fig.add_subplot(4,3,3)
         t = np.arange(ht.shape[0])/self.bw
         ax4.plot(t,np.roll(20*np.log10(np.abs(ht)),(ht.shape[0]/2)-self.rindex))
         ax4.plot(t,np.roll(20*np.log10(np.convolve(np.ones((10,))/10.0,np.abs(ht),mode='same')),(ht.shape[0]/2)-self.rindex),linewidth=2,color='r',alpha=0.4)
+        ax4.plot(t,np.roll(20*np.log10(np.abs(freq2time(minphase(np.abs(hf))))), -self.rindex),alpha=0.75)
         ax4.set_ylim(0,80)
         ax4.set_xlim(t[0],t[-1])
         ax4.text(0.9,0.9,"dB|h(t)|$^2$",
@@ -552,13 +574,24 @@ class CyclicSolver():
         ax4.text(0.95,0.01,"$\\mu$s",
                  fontdict=dict(size='small'),va='bottom',ha='right',
                  transform=ax4.transAxes)
-        ax5 = fig.add_subplot(3,3,6)
+        ax4b = fig.add_subplot(4,3,6)
+        f = np.linspace(self.rf+self.bw/2.0,self.rf-self.bw/2.0,self.nchan)
+        ax4b.plot(f,np.abs(hf))
+        ax4b.text(0.9,0.9,"|H(f)|",
+                 fontdict=dict(size='small'),va='top',ha='right',
+                 transform=ax4b.transAxes)
+        ax4b.text(0.95,0.01,"MHz",
+                 fontdict=dict(size='small'),va='bottom',ha='right',
+                 transform=ax4b.transAxes)
+        ax4b.set_xlim(f.min(),f.max())
+        ax4b.xaxis.set_major_locator(plt.MaxNLocator(4))
+        ax5 = fig.add_subplot(4,3,9)
         if len(self.objval) >= 3:
             x = np.abs(np.diff(np.array(self.objval).flatten()))
             ax5.plot(np.arange(x.shape[0]),np.log10(x))
         ax5.text(0.9,0.9,"log($\\Delta$merit)",
                  fontdict=dict(size='small'),va='top',ha='right',transform=ax5.transAxes)
-        ax6 = fig.add_subplot(3,3,9)
+        ax6 = fig.add_subplot(4,3,12)
         pref =  harm2phase(self.s0)
         ax6.plot(pref,label='Reference',linewidth=2)
         ax6.plot(harm2phase(sopt),'r',label='Intrinsic')
@@ -577,9 +610,26 @@ class CyclicSolver():
         fname = os.path.join(self.plotdir,('%s_%04d_%04d.png' % (self.source, self.nopt, self.niter)))
         canvas.print_figure(fname)
 
-        
-        
-        
+
+def fold(v):
+    """
+    Fold negative response onto positive time for minimum phase calculation
+    """        
+    n = v.shape[0]
+    nt = n/2
+    rf = np.zeros_like(v[:nt])
+    rf[:-1] = v[1:nt]
+    rf += np.conj(v[:nt-1:-1])
+    rw = np.zeros_like(v)
+    rw[0] = v[0]
+    rw[1:nt+1] = rf
+    return rw    
+
+def minphase(v):
+    clipped = v.copy()
+    thresh = 1e-5
+    clipped[np.abs(v) < thresh] = thresh
+    return np.exp(np.fft.fft(fold(np.fft.ifft(np.log(clipped)))))        
 def loadArray(fname):
     """
     Load array from txt file in format generated by filter_profile,
