@@ -708,8 +708,8 @@ def cc2cs(cc):
 def ps2cs(ps):
     cs =  np.fft.rfft(ps,axis=1)
     #ps2cs renorm
-    return cs/cs.shape[1] # original version from Cyclic-modelling
-    #return cs/(2*(cs.shape[1] - 1))
+    #return cs/cs.shape[1] # original version from Cyclic-modelling
+    return cs/(2*(cs.shape[1] - 1))
 
 def cs2ps(cs):
     return (cs.shape[1] -1) * 2 * np.fft.irfft(cs,axis=1)
@@ -728,8 +728,8 @@ def harm2phase(ph):
 def phase2harm(pp):
     ph = np.fft.rfft(pp)
     #profile_harm_renorm
-    return ph/ph.shape[0]  #original version from Cyclic-modelling
-    #return ph/(2*(ph.shape[0]-1))
+#    return ph/ph.shape[0]  #original version from Cyclic-modelling
+    return ph/(pp.shape[0]) #(2*(ph.shape[0]-1))
 
 def match_two_filters(hf1,hf2):
     z = (hf1 * np.conj(hf2)).sum()
@@ -943,6 +943,14 @@ def loadCyclicSolver(statefile):
     fh.close()
     return cys
 
+
+def crandn(*args):
+    """
+    Complex version of randn (normally distributed random real and imag components)
+    
+    args are passed directly to np.random.randn
+    """
+    return np.random.randn(*args) + 1j*np.random.randn(*args)
 
 if __name__ == "__main__":
     import sys
