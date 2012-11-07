@@ -56,6 +56,8 @@ import os
 print "running test_merit..."
 os.system('/home/gjones/workspace/Cyclic-Modelling/test_merit')
 
+# If preferred, you can run test_merit yourself and then comment out the os.system call and point the next line to the results.
+
 # the following assumes the results of test_merit will end up in your current directory.
 dirname = os.path.abspath('.')
 
