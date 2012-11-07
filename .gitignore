@@ -34,3 +34,4 @@ pip-log.txt
 /test.txt
 /.project
 /.pydevproject
+/*.tst
