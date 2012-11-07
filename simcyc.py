@@ -56,11 +56,16 @@ def initSim(ht,prof,ref_freq,bw,rf = None,filename= None,source='fake',noise = N
     CS.nchan = ht.shape[1]
     CS.nlag = CS.nchan
     CS.nphase = prof.shape[0]
+    CS.nbin = CS.nphase
     CS.nharm = CS.nphase/2 + 1
     CS.source = source
     CS.nspec = ht.shape[0]
     CS.dynamic_spectrum = np.zeros((CS.nspec,CS.nchan))
     CS.optimized_filters = np.zeros((CS.nspec,CS.nchan),dtype='complex')
+    CS.intrinsic_profiles = np.zeros((CS.nspec,CS.nbin))
+    CS.nopt = 0
+    CS.nloop = 0        
+
     CS.nopt = 0
     
     CS.ref_freq = ref_freq
