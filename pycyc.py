@@ -92,7 +92,7 @@ CS.loop(make_plots=True, tolfact=10, maxneg=10, maxlen = 110)
 try:
     import psrchive
 except:
-    pass
+    print "pycyc.py: psrchive python libraries not found. You will not be able to load psrchive files."
 import numpy as np
 from matplotlib import pyplot as plt
 from matplotlib.figure import Figure                         
@@ -330,10 +330,13 @@ class CyclicSolver():
                 ht = np.zeros((self.nlag,),dtype='complex')
                 ht[delay] = self.nlag
                 if use_minphase:
-                    spect = np.abs(self.data[isub,ipol,:,onp[0]:onp[1]]).mean(1)
-                    ht = freq2time(minphase(spect-spect.min()))
-                    ht = np.roll(ht,delay)
-                    print "using minimum phase with peak at:",np.abs(ht).argmax()
+                    if onp is None:
+                        print "onp not specified, so not using minimum phase"
+                    else:
+                        spect = np.abs(self.data[isub,ipol,:,onp[0]:onp[1]]).mean(1)
+                        ht = freq2time(minphase(spect-spect.min()))
+                        ht = np.roll(ht,delay)
+                        print "using minimum phase with peak at:",np.abs(ht).argmax()
             else:
                 ht = ht0.copy()
             hf = time2freq(ht)
@@ -565,7 +568,9 @@ class CyclicSolver():
         t = np.arange(ht.shape[0])/self.bw
         ax4.plot(t,np.roll(20*np.log10(np.abs(ht)),(ht.shape[0]/2)-self.rindex))
         ax4.plot(t,np.roll(20*np.log10(np.convolve(np.ones((10,))/10.0,np.abs(ht),mode='same')),(ht.shape[0]/2)-self.rindex),linewidth=2,color='r',alpha=0.4)
-        ax4.plot(t,np.roll(20*np.log10(np.abs(freq2time(minphase(np.abs(hf))))), -self.rindex),alpha=0.75)
+        ax4.plot(t,np.roll(20*np.log10(np.abs(freq2time(minphase(np.abs(hf))))), (ht.shape[0]/2)-self.rindex),alpha=0.75)
+        if self.ht0 is not None:
+            ax4.plot(t,np.roll(20*np.log10(1024*np.abs(self.ht0[self.isub,:])),(ht.shape[0]/2)))
         ax4.set_ylim(0,80)
         ax4.set_xlim(t[0],t[-1])
         ax4.text(0.9,0.9,"dB|h(t)|$^2$",
@@ -577,6 +582,11 @@ class CyclicSolver():
         ax4b = fig.add_subplot(4,3,6)
         f = np.linspace(self.rf+self.bw/2.0,self.rf-self.bw/2.0,self.nchan)
         ax4b.plot(f,np.abs(hf))
+        if self.ht0 is not None:
+            ax4b.plot(f,np.abs(hf/(256*time2freq(self.ht0[self.isub,:]))))
+            ax4b.plot(f,np.angle(hf/time2freq(self.ht0[self.isub,:])))
+            ax4b.plot(f,np.angle(minphase(np.abs(hf))/time2freq(self.ht0[self.isub,:])))
+            ax4b.set_ylim(-3,5)
         ax4b.text(0.9,0.9,"|H(f)|",
                  fontdict=dict(size='small'),va='top',ha='right',
                  transform=ax4b.transAxes)
