@@ -6,6 +6,7 @@ reload(pycyc)
 import numpy as np
 from matplotlib import pyplot as plt
 import os
+import glob
 
 def runLoopTest(tau=650.0,nlag=4096,bw=1.0,noise=0,tolfact=10, niter=5,maxfun=1000,maxinitharm=20):
     filename = 'itersim1643_tau%.2fus_noise%.2f' % (tau,noise)
@@ -42,6 +43,38 @@ def runTest(tau,nlag,bw=1.0,noise=0.0,tolfact=10,initprof=False):
     CS.loop(make_plots=True,tolfact=tolfact)
     return CS
 
+def simSuite(taus=[2.0,10.0,100.0],harms=[3,10],periods=[1.5e-3,4e-3,10e-3],snrs=[10,100],
+             maxfun = 100):
+    for tau in taus:
+        for harm in harms:
+            for period in periods:
+                for snr in snrs:
+                    prof = makeProfile(harm)
+                    ht = makeht(tau, nlag=2048)
+                    CS = initSim(ht,prof,ref_freq=1/period,bw=1.0,noise=snr,source = ('tau_%.1f_nharm_%d_period_%.2f_snr_%.3f' % (tau,harm,period*1000.,snr)))
+                    CS.initProfile()
+                    CS.pp_meas = CS.pp_ref.copy()
+                    CS.pp_ref = prof
+                    CS.ph_ref = pycyc.phase2harm(CS.pp_ref)
+                    CS.ph_ref = pycyc.normalize_profile(CS.ph_ref)
+                    CS.ph_ref[0] = 0
+                    CS.s0 = CS.ph_ref.copy()
+
+                    CS.plotdir = '/home/gjones/workspace/pycyc/simsuite'
+                    CS.pharm = harm
+                    CS.tau = tau
+                    CS.noise = snr
+                    CS.loop(make_plots=False,maxfun=maxfun)
+                    CS.noise = snr
+                    CS.saveState(os.path.join(CS.plotdir,'cs_' + CS.source + '.pkl'))
+                    pycyc.plotSimulation(CS)
+
+def replotSims(simdir = '/home/gjones/workspace/pycyc/simsuite'):
+    sims = glob.glob(os.path.join(simdir, 'cs_*.pkl'))
+    for sim in sims:
+        cs = pycyc.loadCyclicSolver(sim)
+        pycyc.plotSimulation(cs)
+
 def initSim(ht,prof,ref_freq,bw,rf = None,filename= None,source='fake',noise = None):
     if rf is None:
         rf = np.abs(bw)/2.0
@@ -52,7 +85,7 @@ def initSim(ht,prof,ref_freq,bw,rf = None,filename= None,source='fake',noise = N
     if filename:
         CS.filename = filename
     else:
-        CS.filename = 'sim%s_%.1fMHz_%.1fms' % (source,bw,1000/ref_freq)   
+        CS.filename = 'sim%s_%.1fMHz_%.1fms' % (source,bw,1000.0/ref_freq)   
     CS.nchan = ht.shape[1]
     CS.nlag = CS.nchan
     CS.nphase = prof.shape[0]
@@ -87,8 +120,13 @@ def initSim(ht,prof,ref_freq,bw,rf = None,filename= None,source='fake',noise = N
     for k in range(CS.nspec):
         CS.data[k,0,:,:] = pycyc.cs2ps(CS.modelCS(ht[k,:]))
     if noise is not None:
-        fact = CS.data.std()*noise
-        CS.data += (np.random.randn(CS.data.shape[2],CS.data.shape[3]).astype('complex')+1j*np.random.randn(CS.data.shape[2],CS.data.shape[3]))*fact
+        signal = np.abs(CS.data).sum()
+        CS.noise = noise
+        rn = (np.random.randn(CS.data.shape[0],CS.data.shape[1],CS.data.shape[2],CS.data.shape[3]).astype('complex')
+              +1j*np.random.randn(CS.data.shape[0],CS.data.shape[1],CS.data.shape[2],CS.data.shape[3]))
+        rnpow = np.abs(rn).sum()
+        fact = signal/rnpow
+        CS.data = CS.data + rn*(fact/noise)
     return CS
 
 def makeProfile(scale,nbins=1024):
