@@ -483,7 +483,6 @@ class CyclicSolver():
         self.statefile = orig_statefile
         print "Saved state in:", filename
         
-
             
     def plotCurrentSolution(self):
         cs_model = self.model
@@ -613,6 +612,165 @@ class CyclicSolver():
         canvas = FigureCanvasAgg(fig)
         fname = os.path.join(self.plotdir,('%s_%04d_%04d.png' % (self.source, self.nopt, self.niter)))
         canvas.print_figure(fname)
+
+
+def plotSimulation(CS,mlag=100):
+    if CS.ht0 is None:
+        print "Does not appear this is a simulation run"
+    grad = CS.grad
+    hf = CS.hf
+    ht = CS.ht#[CS.isub,:]
+    cs0 = CS.modelCS(ht)
+    t = np.arange(ht.shape[0])/CS.bw
+    f = np.linspace(CS.rf+CS.bw/2.0,CS.rf-CS.bw/2.0,CS.nchan)
+    csextent = [1,mlag-1,CS.rf-CS.bw/2.0,CS.rf+CS.bw/2.0]
+    ht0 = CS.ht0[CS.isub]
+    hf0 = match_two_filters(hf, time2freq(ht0))
+    cs_model = CS.modelCS(ht0)
+    
+    fig = Figure(figsize=(10,7))
+    ax1 = fig.add_subplot(3,3,1)
+    ax1.plot(f,np.abs(hf),label=r'|$\hat{H}(f)$|')
+    ax1.plot(f,np.abs(hf0),label='|$H$(f)|')
+    l = ax1.legend(loc='upper right',prop=dict(size='x-small'))
+    l.get_frame().set_alpha(0.5)
+    ax1.text(0.9,0.1,"MHz",
+         fontdict=dict(size='small'),va='top',ha='right',
+         transform=ax1.transAxes, bbox=dict(alpha=0.75,fc='white'))
+
+    ax1.set_xlim(f.min(),f.max())
+    
+    ax2 = fig.add_subplot(3,3,4)
+    ax2.plot(f,np.abs(hf/hf0),label=r'$\left|\frac{\hat{H}(f)}{H(f)}\right|$')
+    ax2.plot(f,np.angle(hf/hf0), alpha=0.7, label = r'$\angle\left(\frac{\hat{H}(f)}{H(f)}\right)$')
+    l = ax2.legend(loc='lower left',prop=dict(size='x-small'))
+    l.get_frame().set_alpha(0.5)
+    ax2.text(0.9,0.1,"MHz",
+         fontdict=dict(size='small'),va='top',ha='right',
+         transform=ax2.transAxes, bbox=dict(alpha=0.75,fc='white'))
+
+
+    #ax2.plot(f[:-1],np.diff(np.angle(hf/hf0)))
+    #ax2.plot(f[:-1],np.diff(np.angle(minphase(np.abs(hf))/hf0)))
+    ax2.set_ylim(-3.2,3.2)
+    ax2.set_xlim(f.min(),f.max())
+    
+    ax3 = fig.add_subplot(3,3,2)
+#    im = ax3.imshow(np.abs(cs_model[:,:mlag]/cs0[:,:mlag]),
+#                     aspect='auto',interpolation='nearest',extent=csextent)
+#    im.set_clim(0.5,2)
+    pt = 1e3*np.linspace(0,1,CS.nphase) / CS.ref_freq
+    ax3.plot(pt,np.fft.fftshift(CS.pp_meas),'r',label='measured')
+    ax3.plot(pt,np.fft.fftshift(CS.pp_int),'cyan',alpha=0.7,label='deconvolved')
+    ax3.plot(pt,np.fft.fftshift(harm2phase(CS.s0)),'k',label='original')
+    ax3.errorbar([pt[len(pt)/4]],[CS.pp_meas.max()/2.0],xerr=CS.tau/1e3,capsize=5,linewidth=2)
+    ax3.text(pt[len(pt)/4],CS.pp_meas.max()*.55,'tau',fontdict=dict(size='small'))
+    ax3.set_xlim(0,pt[-1])
+    l = ax3.legend(loc='upper right',prop=dict(size='x-small'))
+    l.get_frame().set_alpha(0.5)
+    ax3.text(0.9,0.1,"ms",
+         fontdict=dict(size='small'),va='top',ha='right',
+         transform=ax3.transAxes, bbox=dict(alpha=0.75,fc='white'))
+
+
+    
+    ax4 = fig.add_subplot(3,3,3)
+    im = ax4.imshow(np.angle(cs_model[:,:mlag]/cs0[:,:mlag]), cmap=plt.cm.hsv,
+                     aspect='auto',interpolation='nearest',extent=csextent)
+    im.set_clim(-3.2,3.2)
+    ax4.text(0.9,0.9,"angle cs_model/cs0",
+         fontdict=dict(size='small'),va='top',ha='right',
+         transform=ax4.transAxes, bbox=dict(alpha=0.75,fc='white'))
+
+    
+    ax5 = fig.add_subplot(3,3,5)
+#    im = ax5.imshow(np.abs(CS.cs[:,:mlag]/cs0[:,:mlag]),
+#                     aspect='auto',interpolation='nearest',extent=csextent)
+#    im.set_clim(0.5,2)
+    ax5.plot(t/1e3,np.fft.fftshift(20*np.log10(np.abs(ht0)/np.abs(ht0).max())),label='dB($|h(t)|^2$)')
+    ax5.plot(t/1e3,np.fft.fftshift(20*np.log10(np.abs(ht)/np.abs(ht).max()))-40.0,'r',label=r'dB($|\hat{h}(t)|^2$)-40') 
+    ax5.set_ylim(-80.,0)
+    ax5.set_xlim(0,t[-1]/1e3)
+    l = ax5.legend(loc='upper left',prop=dict(size='x-small'))
+    l.get_frame().set_alpha(0.5)
+    ax5.text(0.9,0.1,"ms",
+         fontdict=dict(size='small'),va='top',ha='right',
+         transform=ax5.transAxes, bbox=dict(alpha=0.75,fc='white'))
+
+
+    
+    ax8 = fig.add_subplot(3,3,8)
+    maxt0 = t[np.fft.fftshift(np.abs(ht0)).argmax()]
+    maxt = t[np.fft.fftshift(np.abs(ht)).argmax()]
+    if maxt0 < maxt:
+        maxt = maxt0
+#    ax8.plot(t-maxt,np.fft.fftshift(20*np.log10(np.abs(ht0)/np.abs(ht0).max())),label='dB($|h(t)|^2$)')
+#    ax8.plot(t-maxt,np.fft.fftshift(20*np.log10(np.abs(ht)/np.abs(ht).max())),'r',label=r'dB($|\hat{h}(t)|^2$)') 
+#    ax8.set_ylim(-80.,0)
+
+    ax8.plot(t-maxt,np.fft.fftshift((np.abs(ht0)/np.abs(ht0).max())),label='$|h(t)|$')
+    ax8.plot(t-maxt,np.fft.fftshift((np.abs(ht)/np.abs(ht).max())),'r',label=r'$|\hat{h}(t)|$') 
+    
+    left = - 5 * CS.tau
+    right =  20 * CS.tau
+    if right > t[-1]-maxt:
+        right = t[-1]-maxt
+    ax8.set_xlim(left,right)
+    l = ax8.legend(loc='upper right',prop=dict(size='x-small'))
+    l.get_frame().set_alpha(0.5)
+    ax8.set_xlabel(r'$\mu$s')
+    
+    ax6 = fig.add_subplot(3,3,6)
+    im = ax6.imshow(np.angle(CS.cs[:,:mlag]/cs0[:,:mlag]), cmap=plt.cm.hsv,
+                     aspect='auto',interpolation='nearest',extent=csextent)
+    im.set_clim(-3.2,3.2)
+    ax6.text(0.9,0.9,"angle cs_meas/cs0",
+         fontdict=dict(size='small'),va='top',ha='right',
+         transform=ax6.transAxes, bbox=dict(alpha=0.75,fc='white'))
+    
+    ax7 = fig.add_subplot(3,3,7)
+    im = ax7.imshow(np.log10(np.abs(CS.cs[:,:mlag])), 
+                     aspect='auto',interpolation='nearest',extent=csextent)
+    ax7.text(0.9,0.9,"log|CS meas|",
+         fontdict=dict(size='small'),va='top',ha='right',
+         transform=ax7.transAxes, bbox=dict(alpha=0.75,fc='white'))
+    ax7.set_xlabel('harmonic')
+    ax7.set_ylabel('MHz')
+
+    ax9 = fig.add_subplot(3,3,9)
+    im = ax9.imshow(np.angle(CS.cs[:,:mlag]), cmap = plt.cm.hsv,
+                     aspect='auto',interpolation='nearest',extent=csextent)
+    
+    ax9.text(0.9,0.9,"angle(CS meas)",
+         fontdict=dict(size='small'),va='top',ha='right',
+         transform=ax9.transAxes, bbox=dict(alpha=0.75,fc='white'))
+    ax9.set_xlabel('harmonic')
+    
+    fname = CS.filename[-50:]
+    if len(CS.filename) > 50:
+        fname = '...' + fname
+    try:
+        harmstr = 'Harmonics: %d' % CS.pharm
+    except AttributeError:
+        harmstr = ''
+        
+    try:
+        taustr = 'h(t) tau: %.1f' % CS.tau
+        if CS.noise is not None:
+            snrstr = 'snr: %.3f' % CS.noise
+        else:
+            snrstr = ''
+    except AttributeError:
+        taustr = ''        
+  
+     
+    title = "%s isub: %d ipol: %d nopt: %d\n" % (fname, CS.isub,CS.ipol,CS.nopt)
+    title += harmstr + ' ' + taustr + ' ' + snrstr + ' ' + (" Feval #%04d Merit: %.3e" % 
+              (CS.niter, CS.objval[-1]))
+    fig.suptitle(title, size='small')
+    canvas = FigureCanvasAgg(fig)
+    fname = os.path.join(CS.plotdir,('sim_SNR_%.1f_%s_%04d_%04d.pdf' % (CS.noise, CS.source, CS.nopt, CS.niter)))
+    canvas.print_figure(fname)
 
 
 def fold(v):
