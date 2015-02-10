@@ -261,7 +261,7 @@ class CyclicSolver():
              maxfun = 1000, tolfact=1, iprint=1, plotdir = None,
              maxneg = None, maxlen = None, rindex= None,
              ht0 = None,max_plot_lag=50,use_last_soln=True, use_minphase = True,
-             onp=None,adjust_delay=True):
+             onp=None,adjust_delay=True,plot_every=1):
         """
         Run the non-linear solver to compute the IRF
         
@@ -280,6 +280,7 @@ class CyclicSolver():
         use_minphase: if true, use minimum phase IRF as initial guess
                         else use delta function
         """
+        self.plot_every = plot_every
         self.make_plots = make_plots
         if make_plots:
             self.mlag = max_plot_lag
@@ -1087,7 +1088,8 @@ def cyclic_merit_lag(x,*args):
         print "merit= %.7e  grad= %.7e" % (merit,(np.abs(grad)**2).sum())
             
     if CS.make_plots:
-        CS.plotCurrentSolution()
+        if CS.niter % CS.plot_every == 0:
+            CS.plotCurrentSolution()
         
         
     
